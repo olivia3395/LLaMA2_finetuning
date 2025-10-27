@@ -178,9 +178,6 @@ At inference time, the LoRA adapters can be **merged back** into the model or ke
 
 ##  **8. References**
 
-* Dettmers, Touvron, et al. *QLoRA: Efficient Finetuning of Quantized LLMs*, arXiv:2305.14314 (2023)
-* Hu et al., *LoRA: Low-Rank Adaptation of Large Language Models*, arXiv:2106.09685
-* Meta AI, *LLaMA 2: Open Foundation and Fine-Tuned Chat Models*, 2023
 * Hugging Face PEFT & bitsandbytes Documentation: [https://huggingface.co/docs/peft](https://huggingface.co/docs/peft)
 
 ---
