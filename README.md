@@ -4,7 +4,6 @@
 This project demonstrates how to fine-tune **LLaMA 2**, a large language model developed by Meta, using **QLoRA** (Quantized Low-Rank Adaptation).
 The method allows efficient training of massive transformer models on consumer-grade GPUs without sacrificing performance — a key advancement in democratizing large model fine-tuning.
 
----
 
 ##  **1. Background & Motivation**
 
@@ -23,7 +22,6 @@ To address this, **QLoRA** combines two ideas:
 
 Thus, QLoRA makes it possible to fine-tune a **70B model on a single 48GB GPU**, or a **7B model on a 12GB GPU** — without losing accuracy.
 
----
 
 ##  **2. Technical Overview**
 
@@ -50,7 +48,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 tokenizer.pad_token = tokenizer.eos_token
 ```
 
----
+
 
 ###  Step 2: Add LoRA Adapters
 
@@ -79,7 +77,7 @@ model = get_peft_model(model, lora_config)
 This drastically reduces trainable parameters (typically < 1% of total),
 while still enabling task-specific adaptation.
 
----
+
 
 ###  Step 3: Prepare Dataset & Tokenization
 
@@ -87,7 +85,7 @@ Use any text dataset — such as instruction tuning data, domain documents, or c
 
 Each sample becomes a self-contained instruction–response prompt.
 
----
+
 
 ### Step 4: Fine-Tuning with PEFT + Transformers Trainer
 
@@ -95,8 +93,6 @@ We fine-tune only the LoRA adapters while keeping the 4-bit quantized weights fi
 
 
 Training is efficient — often requiring less than 20GB GPU memory for a 7B model.
-
----
 
 ## **3. Mathematical Formulation**
 
@@ -126,7 +122,6 @@ $$
 
 This ensures minimal information loss while drastically reducing memory use.
 
----
 
 ##  **4. Architecture Summary**
 
@@ -148,7 +143,7 @@ At inference time, the LoRA adapters can be **merged back** into the model or ke
 * Training speed increases due to reduced precision and fewer trainable parameters.
 * No significant loss in generalization or text quality.
 
----
+
 
 ## **6. Advantages & Limitations**
 
@@ -165,7 +160,6 @@ At inference time, the LoRA adapters can be **merged back** into the model or ke
 * Some GPU architectures may not fully support `bitsandbytes` 4-bit kernels
 * Merging adapters requires additional post-processing
 
----
 
 ## **7. Future Work**
 
@@ -174,11 +168,7 @@ At inference time, the LoRA adapters can be **merged back** into the model or ke
 * Implement dynamic rank allocation based on layer importance
 * Explore **parameter-efficient continual learning** with adapter fusion
 
----
-
 ##  **8. References**
 
 * Hugging Face PEFT & bitsandbytes Documentation: [https://huggingface.co/docs/peft](https://huggingface.co/docs/peft)
-
----
 
