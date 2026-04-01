@@ -1,29 +1,5 @@
 # QLoRA Fine-Tuning — LLaMA 2 Instruction Tuning on Consumer GPUs
 
-A **complete, production-quality** implementation of **QLoRA** (4-bit Quantized LoRA)
-for instruction fine-tuning of LLaMA 2, designed to run on a single consumer GPU.
-
----
-
-## Table of Contents
-
-1. [Overview](#overview)
-2. [Theory: QLoRA in Depth](#theory)
-3. [Memory Requirements](#memory-requirements)
-4. [Architecture](#architecture)
-5. [Supported Prompt Formats](#prompt-formats)
-6. [Project Structure](#project-structure)
-7. [Quick Start](#quick-start)
-8. [Training](#training)
-9. [Evaluation](#evaluation)
-10. [Inference](#inference)
-11. [Merge and Export](#merge-and-export)
-12. [Configuration Reference](#configuration-reference)
-13. [Testing](#testing)
-14. [References](#references)
-
----
-
 ## Overview
 
 **QLoRA** = Quantization + LoRA. It enables fine-tuning of 7B+ parameter models
@@ -39,7 +15,7 @@ on a single 8–24 GB consumer GPU by combining:
 
 **Result**: Fine-tune LLaMA-2-7B on a **10 GB GPU** (RTX 3080) in 2–5 hours.
 
----
+
 
 ## Theory: QLoRA in Depth
 
@@ -120,7 +96,6 @@ This is called **instruction masking** — we only compute loss on the response,
 not the instruction. This prevents the model from "forgetting" the instruction
 format by over-fitting on prompt tokens.
 
----
 
 ## Memory Requirements
 
@@ -145,7 +120,7 @@ KV cache + overhead:       ~0.7  GB
 Total:                     ~7.0  GB  ← fits RTX 3080 (10 GB)
 ```
 
----
+
 
 ## Architecture
 
@@ -179,7 +154,7 @@ qlora_ft/
     └── test_all.py              ← 40+ tests across 12 groups
 ```
 
----
+
 
 ## Prompt Formats
 
@@ -213,40 +188,7 @@ You are a helpful assistant.
 Explain quantum entanglement. [/INST] Quantum entanglement is...
 ```
 
----
 
-## Project Structure
-
-```
-qlora_ft/
-├── config.py
-├── requirements.txt
-├── data/
-│   ├── __init__.py
-│   ├── formatting.py
-│   └── dataset.py
-├── model/
-│   ├── __init__.py
-│   ├── loader.py
-│   ├── lora.py
-│   └── utils.py
-├── training/
-│   ├── __init__.py
-│   ├── trainer.py
-│   ├── callbacks.py
-│   └── metrics.py
-├── inference/
-│   ├── __init__.py
-│   └── generate.py
-├── scripts/
-│   ├── train.py
-│   ├── evaluate.py
-│   └── merge_and_export.py
-└── tests/
-    └── test_all.py
-```
-
----
 
 ## Quick Start
 
@@ -272,7 +214,7 @@ python scripts/train.py --model meta-llama/Llama-2-7b-hf
 python scripts/train.py --lora-r 8 --epochs 1 --max-samples 5000
 ```
 
----
+
 
 ## Training
 
@@ -307,7 +249,6 @@ python scripts/train.py \
   --wandb my-qlora-run
 ```
 
----
 
 ## Evaluation
 
@@ -328,7 +269,6 @@ python scripts/evaluate.py --synthetic
 - `rouge_l` — ROUGE-L F1 on generated vs reference outputs
 - `mean_length` — mean generated response length
 
----
 
 ## Inference
 
@@ -365,7 +305,7 @@ for token in gen.stream("Write a poem about Python."):
     print(token, end="", flush=True)
 ```
 
----
+
 
 ## Merge and Export
 
@@ -386,7 +326,6 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 model = AutoModelForCausalLM.from_pretrained("outputs/qlora/merged_model")
 ```
 
----
 
 ## Configuration Reference
 
@@ -416,7 +355,6 @@ model = AutoModelForCausalLM.from_pretrained("outputs/qlora/merged_model")
 | `bf16` | `True` | bfloat16 training |
 | `gradient_accumulation_steps` | `4` | Effective batch = batch × accum |
 
----
 
 ## Testing
 
@@ -433,7 +371,7 @@ F — Model utilities, G — Synthetic model, H — InstructionDataset,
 I — Training callbacks, J — Metrics, K — Manual training loop,
 L — Inference generator
 
----
+
 
 ## References
 
