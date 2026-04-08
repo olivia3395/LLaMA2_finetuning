@@ -1,164 +1,153 @@
-# QLoRA Fine-Tuning — LLaMA 2 Instruction Tuning on Consumer GPUs
+<div align="center">
 
-## Overview
+<img src="https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white"/>
+<img src="https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white"/>
+<img src="https://img.shields.io/badge/HuggingFace-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black"/>
+<img src="https://img.shields.io/badge/PEFT-LoRA-8b5cf6?style=for-the-badge"/>
+<img src="https://img.shields.io/badge/GPU-10GB+-22c55e?style=for-the-badge&logo=nvidia&logoColor=white"/>
 
-**QLoRA** = Quantization + LoRA. It enables fine-tuning of 7B+ parameter models
-on a single 8–24 GB consumer GPU by combining:
+<br/><br/>
+
+# 🦙 QLoRA Fine-Tuning
+### LLaMA-2 Instruction Tuning on Consumer GPUs
+
+<br/>
+
+> Fine-tune a **7B parameter model** on a single **10 GB GPU** in 2–5 hours  
+> by combining 4-bit quantization with low-rank adapter training.
+
+<br/>
+
+[🚀 Quick Start](#-quick-start) · [💾 Memory Guide](#-memory-requirements) · [🏗️ Architecture](#️-project-architecture) · [🎯 Prompt Formats](#-prompt-formats) · [📊 Evaluation](#-evaluation) · [📎 References](#-references)
+
+<br/>
+
+
+
+</div>
+
+## ✨ What is QLoRA?
+
+**QLoRA = Quantization + LoRA.** Two complementary techniques stacked together to make large-model fine-tuning accessible on commodity hardware:
+
+<br/>
+
+<div align="center">
 
 | Technique | Memory Savings | Quality Cost |
-|-----------|---------------|-------------|
-| 4-bit NF4 quantization (bitsandbytes) | 4× vs fp16 | ~0.1% PPL increase |
-| Double quantization | +0.37 GB extra savings | negligible |
-| LoRA adapters (r=16) | train 0.4% of params | minimal for instruction tuning |
-| Paged AdamW optimizer | offload optimizer states to CPU | none |
-| Gradient checkpointing | 5–10× activation savings | 20–30% slower |
+|:---|:---:|:---:|
+| 4-bit NF4 quantization (bitsandbytes) | **4× vs fp16** | ~0.1% PPL increase |
+| Double quantization | +0.37 GB extra | negligible |
+| LoRA adapters (r = 16) | train only **0.4% of params** | minimal for instruction tuning |
+| Paged AdamW optimizer | offloads optimizer states to CPU | none |
+| Gradient checkpointing | **5–10× activation savings** | 20–30% slower |
 
-**Result**: Fine-tune LLaMA-2-7B on a **10 GB GPU** (RTX 3080) in 2–5 hours.
+</div>
 
-
-
-## Theory: QLoRA in Depth
-
-### 4-bit NF4 Quantization
-
-**Normal Float 4 (NF4)** is a data type designed specifically for neural network weights:
-
-```
-Insight: Pre-trained neural network weights follow a normal distribution N(0, σ²)
-
-NF4 grid: choose 16 values that minimize quantization error under N(0,1)
-         (information-theoretically optimal for normally-distributed data)
-
-Standard INT4: uniform grid → wastes precision in the tails
-NF4:           non-uniform grid → concentrates precision where weights are dense
-```
-
-Quantization formula:
-```
-W_nf4 = nf4_quantize(W / absmax(W))   # normalize then quantize to 16 levels
-W_fp  = nf4_dequantize(W_nf4) * absmax(W)   # dequantize for computation
-```
-
-**Double quantization**: quantize the quantization constants (`absmax` values)
-themselves using 8-bit — saves an additional 0.37 GB for 7B models.
-
-### LoRA Mathematics
-
-For a frozen weight W₀ ∈ R^{d×k}, LoRA parameterises updates as:
-
-```
-h = W₀x + ΔWx = W₀x + (α/r) · B · A · x
-
-where:
-  A ∈ R^{r×k}   initialized with N(0, 1/r²)   [randomly initialized]
-  B ∈ R^{d×r}   initialized with zeros         [so ΔW = 0 at start]
-  r << min(d,k) [rank, typically 4-64]
-  α              [scaling, typically 2r]
-```
-
-During training:
-- W₀ is **frozen** (stored in 4-bit, never updated)
-- Only A, B are trained in **full fp32/bf16** precision
-- The asymmetric init ensures training is stable (ΔW starts at 0)
-
-### Why Target These Layers?
-
-```
-LLaMA-2 Transformer Block:
-  Self-Attention:
-    q_proj  ←  LoRA  (query transformation)
-    k_proj  ←  LoRA  (key transformation)
-    v_proj  ←  LoRA  (value transformation)
-    o_proj  ←  LoRA  (output projection)
-  MLP (SwiGLU):
-    gate_proj  ←  LoRA  (gating branch)
-    up_proj    ←  LoRA  (expansion branch)
-    down_proj  ←  LoRA  (contraction branch)
-
-  Skipped (kept frozen):
-    embed_tokens   (embedding lookup, no matmul benefit)
-    lm_head        (sensitive to accuracy, small)
-    layernorm/RMSNorm  (tiny, few parameters)
-```
-
-### Training Objective
-
-Standard next-token prediction (language modeling):
-
-```
-L = -1/|C| · Σ_{t∈C} log P(w_t | w_{<t})
-
-where C is the set of completion token positions
-(prompt tokens are masked with label=-100, excluded from loss)
-```
-
-This is called **instruction masking** — we only compute loss on the response,
-not the instruction. This prevents the model from "forgetting" the instruction
-format by over-fitting on prompt tokens.
+<br/>
 
 
-## Memory Requirements
 
-### GPU VRAM by Model Size
+## 💾 Memory Requirements
+
+### VRAM by Model Size
+
+<div align="center">
 
 | Model | Min VRAM | Recommended | Batch Size |
-|-------|----------|-------------|-----------|
-| LLaMA-2-7B  | 8 GB  | 16 GB | 1-4 |
-| LLaMA-2-13B | 12 GB | 24 GB | 1-2 |
-| LLaMA-2-70B | 48 GB | 80 GB | 1 (multi-GPU) |
+|:---|:---:|:---:|:---:|
+| LLaMA-2-7B | **8 GB** | 16 GB | 1–4 |
+| LLaMA-2-13B | **12 GB** | 24 GB | 1–2 |
+| LLaMA-2-70B | **48 GB** | 80 GB | 1 (multi-GPU) |
 
-### Memory Breakdown (7B, batch=4, seq=2048)
+</div>
+
+<br/>
+
+### Memory Breakdown — 7B, batch = 4, seq = 2048
 
 ```
-4-bit base model:          ~3.5 GB
-LoRA parameters (r=16):    ~0.05 GB
-Gradients (LoRA only):     ~0.05 GB
-Paged AdamW optimizer:     ~0.2  GB  (partially on CPU)
-Activations (GC enabled):  ~2.5  GB
-KV cache + overhead:       ~0.7  GB
-─────────────────────────────────────
-Total:                     ~7.0  GB  ← fits RTX 3080 (10 GB)
+4-bit base model weights        ~3.5 GB
+LoRA parameters  (r=16)         ~0.05 GB
+Gradients        (LoRA only)    ~0.05 GB
+Paged AdamW optimizer           ~0.2  GB   (partially on CPU)
+Activations      (GC enabled)   ~2.5  GB
+KV cache + overhead             ~0.7  GB
+────────────────────────────────────────
+Total                           ~7.0  GB   ← fits RTX 3080 (10 GB) ✅
 ```
 
+<br/>
 
 
-## Architecture
+
+## 🏗️ Project Architecture
 
 ```
 qlora_ft/
-├── config.py                    ← ModelConfig, LoRAConfig, DataConfig, TrainingConfig
+│
+├── config.py                        ModelConfig · LoRAConfig · DataConfig · TrainingConfig
 │
 ├── data/
-│   ├── formatting.py            ← AlpacaFormatter, ChatMLFormatter, LLaMA2Formatter, SimpleFormatter
-│   └── dataset.py               ← InstructionDataset, InstructionDataCollator, build_datasets
+│   ├── formatting.py                AlpacaFormatter · ChatMLFormatter · LLaMA2Formatter
+│   └── dataset.py                   InstructionDataset · InstructionDataCollator · build_datasets
 │
 ├── model/
-│   ├── loader.py                ← load_model_and_tokenizer() (4-bit NF4 + bitsandbytes)
-│   ├── lora.py                  ← attach_lora() (PEFT), weight stats, effective rank
-│   └── utils.py                 ← count_parameters, memory footprint, merge_lora_weights
+│   ├── loader.py                    load_model_and_tokenizer()  [4-bit NF4 + bitsandbytes]
+│   ├── lora.py                      attach_lora()  [PEFT], weight stats, effective rank
+│   └── utils.py                     count_parameters · memory_footprint · merge_lora_weights
 │
 ├── training/
-│   ├── trainer.py               ← QLoRATrainer (wraps trl.SFTTrainer / HF Trainer)
-│   ├── callbacks.py             ← LoRACheckpoint, EarlyStopping, MemoryLog, GradientStats
-│   └── metrics.py               ← compute_perplexity, token_accuracy, ROUGE-L, evaluate_generation
+│   ├── trainer.py                   QLoRATrainer  [wraps trl.SFTTrainer / HF Trainer]
+│   ├── callbacks.py                 LoRACheckpoint · EarlyStopping · MemoryLog · GradientStats
+│   └── metrics.py                   compute_perplexity · token_accuracy · ROUGE-L
 │
 ├── inference/
-│   └── generate.py              ← InstructionGenerator (single/batch/streaming), load_for_inference
+│   └── generate.py                  InstructionGenerator  [single / batch / streaming]
 │
 ├── scripts/
-│   ├── train.py                 ← Main training CLI
-│   ├── evaluate.py              ← Evaluation CLI (PPL, ROUGE, generation quality)
-│   └── merge_and_export.py      ← Merge LoRA → fp16 + optional GGUF export
+│   ├── train.py                     Main training CLI
+│   ├── evaluate.py                  Evaluation CLI
+│   └── merge_and_export.py          Merge LoRA → fp16 + optional GGUF export
 │
 └── tests/
-    └── test_all.py              ← 40+ tests across 12 groups
+    └── test_all.py                  40+ tests across 12 groups
 ```
 
+<br/>
+
+### LoRA Target Layers
+
+LoRA adapters are attached to **7 linear projections** in each transformer block:
+
+```
+LLaMA-2 Transformer Block
+│
+├── Self-Attention
+│   ├── q_proj   ← LoRA   query transformation
+│   ├── k_proj   ← LoRA   key transformation
+│   ├── v_proj   ← LoRA   value transformation
+│   └── o_proj   ← LoRA   output projection
+│
+└── MLP (SwiGLU)
+    ├── gate_proj  ← LoRA  gating branch
+    ├── up_proj    ← LoRA  expansion branch
+    └── down_proj  ← LoRA  contraction branch
+
+Skipped (frozen):  embed_tokens · lm_head · layernorm / RMSNorm
+```
+
+<br/>
 
 
-## Prompt Formats
 
-### Alpaca (default)
+## 🎯 Prompt Formats
+
+Three formats are supported out of the box — choose based on your dataset.
+
+<br/>
+
+### Alpaca *(default — single-turn instruction)*
 ```
 Below is an instruction that describes a task. Write a response that appropriately completes the request.
 
@@ -169,7 +158,7 @@ Explain quantum entanglement in simple terms.
 Quantum entanglement is a phenomenon where two particles...
 ```
 
-### ChatML (for ShareGPT / multi-turn)
+### ChatML *(ShareGPT / multi-turn)*
 ```
 <|im_start|>system
 You are a helpful assistant.<|im_end|>
@@ -188,56 +177,66 @@ You are a helpful assistant.
 Explain quantum entanglement. [/INST] Quantum entanglement is...
 ```
 
+<br/>
 
 
-## Quick Start
+
+## 🚀 Quick Start
 
 ### Installation
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### Offline test (no model download, no GPU needed)
+### Offline test — no model download, no GPU required
+
 ```bash
 python scripts/train.py --synthetic
 python tests/test_all.py
 ```
 
-### Real training (requires HF token + GPU)
+### Real training — requires HuggingFace token + GPU
+
 ```bash
 export HF_TOKEN=hf_...
 
 # Standard Alpaca instruction tuning
 python scripts/train.py --model meta-llama/Llama-2-7b-hf
 
-# Faster: smaller rank, 1 epoch
+# Faster: smaller rank, 1 epoch, 5k samples
 python scripts/train.py --lora-r 8 --epochs 1 --max-samples 5000
 ```
 
+<br/>
 
 
-## Training
 
-```bash
+## 🏋️ Training
+
+### CLI Reference
+
+```
 python scripts/train.py [OPTIONS]
 
-  --model          meta-llama/Llama-2-7b-hf   HF model name
-  --dataset        tatsu-lab/alpaca            Dataset
-  --prompt-style   alpaca                      alpaca/chatml/llama2/simple
+  --model          meta-llama/Llama-2-7b-hf   HuggingFace model name
+  --dataset        tatsu-lab/alpaca            Dataset identifier
+  --prompt-style   alpaca                      alpaca · chatml · llama2 · simple
   --lora-r         16                          LoRA rank
-  --lora-alpha     32                          LoRA alpha (scaling = α/r)
+  --lora-alpha     32                          LoRA alpha  (scaling = α/r)
   --epochs         3                           Training epochs
   --batch-size     4                           Per-device batch size
-  --grad-accum     4                           Gradient accumulation (eff. batch = 16)
+  --grad-accum     4                           Gradient accumulation steps
   --lr             2e-4                        Learning rate
   --seq-len        2048                        Max sequence length
   --output-dir     outputs/qlora               Checkpoint directory
-  --wandb          my-project                  W&B project name
+  --wandb          my-project                  W&B project name  (optional)
   --synthetic      (flag)                      Offline test mode
   --max-samples    5000                        Limit dataset size
 ```
 
-**Example: Multi-turn chat tuning**
+### Example — Multi-turn Chat Tuning
+
 ```bash
 python scripts/train.py \
   --model meta-llama/Llama-2-7b-chat-hf \
@@ -249,8 +248,11 @@ python scripts/train.py \
   --wandb my-qlora-run
 ```
 
+<br/>
 
-## Evaluation
+
+
+## 📊 Evaluation
 
 ```bash
 # Evaluate fine-tuned adapter
@@ -259,58 +261,66 @@ python scripts/evaluate.py --adapter outputs/qlora/final_adapter
 # Compare with base model
 python scripts/evaluate.py --adapter outputs/qlora/final_adapter --compare-base
 
-# Offline
+# Offline mode
 python scripts/evaluate.py --synthetic
 ```
 
 **Metrics reported:**
-- `perplexity` — exp(NLL) on completion tokens
-- `token_accuracy` — teacher-forced next-token prediction accuracy
-- `rouge_l` — ROUGE-L F1 on generated vs reference outputs
-- `mean_length` — mean generated response length
+
+| Metric | Description |
+|:---|:---|
+| `perplexity` | exp(NLL) on completion tokens |
+| `token_accuracy` | Teacher-forced next-token prediction accuracy |
+| `rouge_l` | ROUGE-L F1 on generated vs. reference outputs |
+| `mean_length` | Mean generated response length in tokens |
+
+<br/>
 
 
-## Inference
 
-```bash
-# Interactive REPL
-python -c "
+## 💬 Inference
+
+### Interactive REPL
+
+```python
 from inference.generate import load_for_inference, InstructionGenerator, GenerationConfig
 from data.formatting import get_formatter
 
 model, tokenizer = load_for_inference(
-    base_model_name='meta-llama/Llama-2-7b-hf',
-    adapter_path='outputs/qlora/final_adapter',
+    base_model_name="meta-llama/Llama-2-7b-hf",
+    adapter_path="outputs/qlora/final_adapter",
 )
 gen = InstructionGenerator(
-    model, tokenizer, get_formatter('alpaca'),
+    model, tokenizer, get_formatter("alpaca"),
     GenerationConfig(max_new_tokens=512, temperature=0.7),
 )
 gen.interactive()
-"
 ```
 
-**Python API:**
-```python
-from inference.generate import InstructionGenerator, GenerationConfig
+### Python API
 
+```python
 # Single response
 response = gen.generate("Explain gradient descent")
 
-# Batch
+# Batch inference
 responses = gen.generate_batch(["Q1", "Q2", "Q3"])
 
-# Streaming
+# Streaming output
 for token in gen.stream("Write a poem about Python."):
     print(token, end="", flush=True)
 ```
 
+<br/>
 
 
-## Merge and Export
+
+## 📦 Merge and Export
+
+Merge the LoRA adapter back into the base weights for standalone deployment:
 
 ```bash
-# Merge adapter into base model (fp16)
+# Merge adapter → fp16 model
 python scripts/merge_and_export.py \
   --base-model meta-llama/Llama-2-7b-hf \
   --adapter    outputs/qlora/final_adapter \
@@ -320,81 +330,114 @@ python scripts/merge_and_export.py \
 python scripts/merge_and_export.py ... --export-gguf
 ```
 
-After merging, load like any standard HF model:
+After merging, load like any standard HuggingFace model:
+
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
 model = AutoModelForCausalLM.from_pretrained("outputs/qlora/merged_model")
 ```
 
+<br/>
 
-## Configuration Reference
+
+## ⚙️ Configuration Reference
 
 ### ModelConfig
+
 | Parameter | Default | Description |
-|-----------|---------|-------------|
-| `model_name` | `meta-llama/Llama-2-7b-hf` | HF model identifier |
+|:---|:---:|:---|
+| `model_name` | `meta-llama/Llama-2-7b-hf` | HuggingFace model identifier |
 | `load_in_4bit` | `True` | Enable 4-bit NF4 quantization |
 | `bnb_4bit_quant_type` | `nf4` | `nf4` (best) or `fp4` |
 | `bnb_4bit_use_double_quant` | `True` | Double quantization |
 | `max_seq_length` | `2048` | Context window |
 
 ### LoRAConfig
+
 | Parameter | Default | Description |
-|-----------|---------|-------------|
+|:---|:---:|:---|
 | `r` | `16` | LoRA rank |
 | `lora_alpha` | `32` | Scaling factor (α/r = 2.0) |
-| `target_modules` | 7 LLaMA linear layers | Which layers to add adapters |
+| `target_modules` | 7 LLaMA linear layers | Which layers receive adapters |
 | `lora_dropout` | `0.05` | Dropout on adapter outputs |
 
 ### TrainingConfig
+
 | Parameter | Default | Description |
-|-----------|---------|-------------|
+|:---|:---:|:---|
 | `optim` | `paged_adamw_32bit` | Paged optimizer (saves VRAM) |
-| `learning_rate` | `2e-4` | Adam LR |
+| `learning_rate` | `2e-4` | Adam learning rate |
 | `gradient_checkpointing` | `True` | Trade compute for memory |
-| `bf16` | `True` | bfloat16 training |
+| `bf16` | `True` | bfloat16 mixed precision |
 | `gradient_accumulation_steps` | `4` | Effective batch = batch × accum |
 
+<br/>
 
-## Testing
+
+
+## 🧪 Testing
 
 ```bash
+# Full test suite
 python -m pytest tests/ -v
-# or
+
+# Or directly
 python tests/test_all.py
 ```
 
 **40+ tests across 12 groups:**
-A — Config, B — Alpaca/ChatML/LLaMA2/Simple formatters,
-C — Dataset loading, D — Data collator, E — LoRA utilities,
-F — Model utilities, G — Synthetic model, H — InstructionDataset,
-I — Training callbacks, J — Metrics, K — Manual training loop,
-L — Inference generator
+
+| Group | Covers |
+|:---:|:---|
+| A | Config presets and validation |
+| B | Alpaca · ChatML · LLaMA-2 · Simple formatters |
+| C | Dataset loading and preprocessing |
+| D | Data collator and padding |
+| E | LoRA utilities and rank analysis |
+| F | Model utilities and memory footprint |
+| G | Synthetic model end-to-end |
+| H | `InstructionDataset` correctness |
+| I | Training callbacks |
+| J | Metrics (PPL, ROUGE, accuracy) |
+| K | Manual training loop |
+| L | Inference generator (single / batch / stream) |
+
+<br/>
 
 
 
-## References
+## 📎 References
 
-1. **Dettmers et al. (2023)** — *QLoRA: Efficient Finetuning of Quantized LLMs*
+1. **Dettmers et al. (2023)** — *QLoRA: Efficient Finetuning of Quantized LLMs*  
    https://arxiv.org/abs/2305.14314
 
-2. **Hu et al. (2022)** — *LoRA: Low-Rank Adaptation of Large Language Models*
+2. **Hu et al. (2022)** — *LoRA: Low-Rank Adaptation of Large Language Models*  
    https://arxiv.org/abs/2106.09685
 
-3. **Touvron et al. (2023)** — *Llama 2: Open Foundation and Fine-Tuned Chat Models*
+3. **Touvron et al. (2023)** — *Llama 2: Open Foundation and Fine-Tuned Chat Models*  
    https://arxiv.org/abs/2307.09288
 
-4. **Dettmers et al. (2022)** — *LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale*
+4. **Dettmers et al. (2022)** — *LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale*  
    https://arxiv.org/abs/2208.07339
 
-5. **Wei et al. (2022)** — *Finetuned Language Models Are Zero-Shot Learners*
+5. **Wei et al. (2022)** — *Finetuned Language Models Are Zero-Shot Learners*  
    https://arxiv.org/abs/2109.01652
 
-6. **PEFT Library** — HuggingFace Parameter-Efficient Fine-Tuning
+6. **PEFT Library** — HuggingFace Parameter-Efficient Fine-Tuning  
    https://github.com/huggingface/peft
 
-7. **TRL Library** — Transformer Reinforcement Learning (SFTTrainer)
+7. **TRL Library** — Transformer Reinforcement Learning (SFTTrainer)  
    https://github.com/huggingface/trl
 
-8. **bitsandbytes** — 4-bit and 8-bit quantization for PyTorch
+8. **bitsandbytes** — 4-bit and 8-bit quantization for PyTorch  
    https://github.com/TimDettmers/bitsandbytes
+
+<br/>
+
+
+
+<div align="center">
+
+
+
+</div>
